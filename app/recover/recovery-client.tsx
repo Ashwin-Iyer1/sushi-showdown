@@ -1,0 +1,11 @@
+"use client";
+import {useEffect,useState} from "react";
+import {Button} from "@/components/ui/button";
+import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from "@/components/ui/select";
+import type {Participant,Snapshot} from "@/lib/scoreboard";
+export default function RecoveryClient(){
+ const[people,setPeople]=useState<Participant[]>([]);const[person,setPerson]=useState("none");const[busy,setBusy]=useState(false);const[error,setError]=useState("");
+ useEffect(()=>{void fetch("/api/scoreboard",{cache:"no-store"}).then(r=>r.json()).then(data=>setPeople((data as Snapshot).participants)).catch(()=>setError("Couldn't load the current game. Try refreshing."));},[]);
+ async function recover(){setBusy(true);setError("");try{const res=await fetch("/api/scoreboard",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"claimOriginal",participantId:person==="none"?undefined:person})});const data=await res.json() as Snapshot&{error?:string};if(!res.ok)throw new Error(data.error||"Couldn't recover the game.");window.location.assign(`/?room=${data.room!.code}`);}catch(err){setError(err instanceof Error?err.message:"Couldn't connect.");}finally{setBusy(false);}}
+ return <main className="scoreboard-shell recovery-shell"><a className="wordmark" href="/">SUSHI SHOWDOWN</a><section className="join-panel"><span className="section-marker">CONTINUE YOUR CURRENT GAME</span><h1>Back to the table.</h1><p>Your existing names and counts stay exactly as they are. Only the original organizer's verified account can regain host controls.</p><label>Your participant profile (optional)</label><Select value={person} onValueChange={setPerson}><SelectTrigger className="recovery-select"><SelectValue placeholder="Host controls only"/></SelectTrigger><SelectContent><SelectItem value="none">Host controls only</SelectItem>{people.map(p=><SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select><p className="helper">Choose your own name if you're also playing. Everyone else can receive a private player link from you.</p>{error&&<p className="error-box" role="alert">{error}</p>}<Button className="join-button" disabled={busy} onClick={()=>void recover()}>{busy?"Recovering…":"Resume as host"}</Button></section></main>;
+}
