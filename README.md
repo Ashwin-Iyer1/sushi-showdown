@@ -6,6 +6,8 @@ Room-based sushi scorekeeping with profile selection, private host/player links,
 
 ## Features
 
+- The default page is a universal create/join lobby. Enter a code to open the room and resume your browser's existing profile, choose an available profile, or add yourself.
+- On the Worker, `/?current=1` opens the original game; existing `?room=` and private fragment links work as before.
 - Create or join a room without an account
 - Choose an available existing profile through a shared room link; claiming is atomic and first-come-first-served
 - Once joined, participants can change only their own count and send only their own reactions
@@ -35,6 +37,20 @@ The all-zero database ID in wrangler.jsonc is a local-development placeholder. L
 ## Your own Cloudflare deployment
 
 Create your own D1 database, replace the placeholder database_id in wrangler.jsonc, apply the migrations to that database, and deploy the built Worker with Wrangler. Use your own Cloudflare account and authorization. This repository does not include any live-site deployment credentials, production database identifiers, or participant records. Pushing GitHub commits does not redeploy the existing live site.
+
+## Vercel frontend with an existing persistent backend
+
+`npm run build:vercel` builds the same React interface as static assets. `vercel.json` selects that build instead of trying to run Cloudflare's Vinext server on Vercel. `/api/scoreboard` is a Node Web Standard gateway to `SCOREBOARD_API_ORIGIN`, configured in Vercel's server environment. It preserves room cookies, private-link exchanges, authorization responses, retry operation IDs, and uncached polling. It does not store data in memory, local SQLite, or a separate database. Without a configured backend it fails closed with 503.
+
+The backend must be an existing authorized HTTPS Worker running this scoreboard API with persistent D1. A compatible backend must use host-only room cookies. Do not configure a fresh empty database as if it contained the live game. The currently published service remains at https://sushi-showdown.turtlecap.chatgpt.site; the Vercel frontend's current-game and recovery links return there. The gateway does not implement organizer identity; recovery stays on the original service.
+
+Cookies are scoped to their origin. Existing browser sessions remain valid on the original live URL, and do not automatically appear on a Vercel domain. Old private links continue to work at their original URLs. A holder can use a private link on the new frontend to establish a new-origin session against the same backend, subject to that backend's permission rules. No tokens, room records, deployment credentials, or production database IDs belong in this repository.
+
+Deployment is intentionally pending: verify Ashwin's connected account is actually on Hobby, verify that the backend is authorized and continues to provide free persistent storage, and confirm no paid Marketplace resource or card entry is required. A reachable public API alone does not verify its account billing or guarantee future availability. GitHub pushes do not update the original live Worker.
+
+Official pricing checked October 2, 2026: [Vercel Hobby](https://vercel.com/docs/plans/hobby) is free for personal non-commercial use and usually pauses usage beyond allowances. Vercel application databases are [Marketplace resources](https://vercel.com/docs/storage), so a frontend deployment does not itself provide a shared SQL database. [D1 Free](https://developers.cloudflare.com/d1/platform/pricing/) includes 5 million rows read/day, 100,000 rows written/day, and 5 GB total storage; [Workers Free](https://developers.cloudflare.com/workers/platform/pricing/) includes 100,000 requests/day. These published free tiers do not establish the plan used by the current Sites-managed backend. The 2-second polling interval consumes both request and database allowances.
+
+Run `npm test` to verify gateway configuration, cookie forwarding, preserved backend permission responses, cross-site write rejection, payload limits, and safe handling of unavailable or redirecting backends. Both `npm run build` and `npm run build:vercel` remain supported. For local room integration checks, run `npm run db:migrate`, `npm run build`, `npm start -- --port 8788`, then `node tests/rooms.integration.mjs` in another terminal. This check creates only local test rooms and covers own-score permissions, host controls, retry safety, private links, session restoration and room isolation. The preview uses the same ignored `.wrangler/state` directory as local migrations.
 
 ## Portable-source boundary
 

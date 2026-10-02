@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build:vercel",
+  "outputDirectory": "dist/vercel",
+  "rewrites": [{ "source": "/recover", "destination": "/index.html" }],
+  "headers": [{ "source": "/api/scoreboard", "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }] }]
+}

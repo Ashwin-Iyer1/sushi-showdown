@@ -9,7 +9,7 @@ import { EMOJIS, mergeParticipants, type Emote, type Participant, type Snapshot 
 
 type Action = { action:string; [key:string]: unknown };
 type Tool = { name:string;title:string;description:string;inputSchema:object;annotations:{readOnlyHint:boolean;untrustedContentHint:boolean};execute:(input:any)=>unknown };
-export default function Home() {
+export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:string}={}) {
   const [view,setView]=useState<"landing"|"room"|"legacy">("landing");
   const [roomCode,setRoomCode]=useState("");
   const [joinCode,setJoinCode]=useState("");
@@ -75,11 +75,24 @@ export default function Home() {
         window.history.replaceState({},"",`${url.pathname}?room=${encodeURIComponent(code)}`);
         void request(token?{action:"enterHost",roomCode:code,token}:{action:"enterParticipant",roomCode:code,token:playerToken,participantId:playerId}).then(data=>apply(data)).catch(err=>setError(err.message));
       }else void refresh(code).catch(err=>setError(err.message));
-    }else if(url.searchParams.get("new")!=="1"){
+    }else if(url.searchParams.get("current")==="1"){
       void refresh("").then(data=>{if(data.room&&data.isOriginalGame){resetRoom(data.room.code);window.history.replaceState({},"",`?room=${data.room.code}`);apply(data);}}).catch(err=>setError(err.message));
     }
     initialized.current=true;
   },[apply,refresh,request,resetRoom]);
+  const openRoom=async()=>{
+    if(saving.current)return;
+    saving.current=true;setBusy(true);setError("");
+    const code=joinCode.trim().toUpperCase();
+    try{
+      // Read first: preserve this browser's identity and offer existing profiles.
+      const res=await fetch(`/api/scoreboard?room=${encodeURIComponent(code)}`,{cache:"no-store",signal:AbortSignal.timeout(10000)});
+      const data=await res.json() as Snapshot&{error?:string};
+      if(!res.ok)throw new Error(data.error||"Couldn't load this room.");
+      resetRoom(code);apply(data);window.history.replaceState({},"",`?room=${encodeURIComponent(code)}`);
+    }catch(err){setError(err instanceof Error?err.message:"Couldn't connect. Please try again.");}
+    finally{saving.current=false;setBusy(false);}
+  };
   useEffect(()=>{
     if(view==="landing")return;
     const poll=setInterval(()=>{if(document.visibilityState==="visible")void refresh().catch(()=>{});},2000);
@@ -140,8 +153,8 @@ export default function Home() {
     <div className="title-row"><div><p className="eyebrow">THE SUSHI EATING COMPETITION</p><h1>{view==="room"?`Table ${roomCode}`:view==="legacy"?"The earlier scoreboard.":"Every piece counts."}</h1></div><p className="small-note">One table.<br/>One shared scoreboard.</p></div>
     {view==="landing"?<>
       <div className="landing-panels"><section className="join-panel"><span className="section-marker">01 / START A TABLE</span><h2>Host a competition</h2><p>Create a room and invite your table. You can adjust everyone's counts.</p><form onSubmit={e=>{e.preventDefault();void save({action:"createRoom",name:hostName}).catch(()=>{});}}><label htmlFor="host-name">Your name</label><Input id="host-name" className="name-input" value={hostName} onChange={e=>setHostName(e.target.value)} placeholder="Your name or nickname" maxLength={32} autoComplete="given-name" required/><Button type="submit" className="join-button" disabled={busy||!hostName.trim()}><Crown size={19}/>Create a room</Button></form><p className="helper">You'll get a player link and a private host control link.</p></section>
-      <section className="join-panel"><span className="section-marker">02 / PULL UP A SEAT</span><h2>Join your table</h2><p>Enter the room code from your host. Each player controls their own count.</p><form onSubmit={e=>{e.preventDefault();void save({action:"join",roomCode:joinCode.toUpperCase(),name}).catch(()=>{});}}><label htmlFor="room-code">Room code</label><Input id="room-code" className="name-input code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g,"").slice(0,6))} placeholder="ABC234" maxLength={6} autoComplete="off" required/><label htmlFor="join-name" className="room-name-label">Your name</label><Input id="join-name" className="name-input" value={name} onChange={e=>setName(e.target.value)} placeholder="Your name or nickname" maxLength={32} autoComplete="given-name" required/><Button type="submit" className="join-button" disabled={busy||joinCode.length!==6||!name.trim()}><Plus size={19}/>Join the room</Button></form></section></div>
-      {errorBox}<p className="landing-note">No accounts or sign-in. Your browser remembers your place at the table.</p><a className="legacy-link" href="/">Return to the current game</a>
+      <section className="join-panel"><span className="section-marker">02 / PULL UP A SEAT</span><h2>Join your table</h2><p>Enter the room code from your host. Each player controls their own count.</p><form onSubmit={e=>{e.preventDefault();void openRoom();}}><label htmlFor="room-code">Room code</label><Input id="room-code" className="name-input code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g,"").slice(0,6))} placeholder="ABC234" maxLength={6} autoComplete="off" required/><Button type="submit" className="join-button" disabled={busy||joinCode.length!==6}><Users size={19}/>Open the room</Button></form></section></div>
+      {errorBox}<p className="landing-note">No accounts or sign-in. Your browser remembers your place at the table.</p><a className="legacy-link" href={originalGameUrl}>Return to the current game</a>
     </>:<>
       {isOriginalGame&&<div className="legacy-notice"><LockKeyhole size={19}/><span>Your current game's names and counts are preserved. {role==="host"?"Share the player link so people can choose an available profile. Private links also work for existing players.":<>Existing players: choose an available profile below. <a href="/recover">Organizer: recover host controls</a></>}</span></div>}
       <section className="stats" aria-label="Competition totals"><div className="total-card"><div><p className="stat-label">SUSHI EATEN</p><p className="total-number">{loaded?total.toLocaleString():"—"}<span>pieces</span></p></div><img className="sushi-photo" src="/sushi.jpg" alt="Two salmon nigiri on a black plate" width="160" height="160"/></div><div className="people-card"><Users size={24} strokeWidth={1.6}/><span className="people-number">{loaded?participants.length:"—"}</span><span className="people-label">{participants.length===1?"participant":"participants"}</span></div></section>

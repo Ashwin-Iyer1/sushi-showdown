@@ -9,10 +9,12 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
-    "start": "wrangler dev --config dist/server/wrangler.json --local",
+    "start": "wrangler dev --config dist/server/wrangler.json --local --persist-to .wrangler/state",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "wrangler d1 migrations apply DB --local"
+    "db:migrate": "wrangler d1 migrations apply DB --local",
+    "build:vercel": "vite build --config vite.vercel.config.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",
