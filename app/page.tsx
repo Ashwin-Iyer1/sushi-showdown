@@ -9,7 +9,7 @@ import { EMOJIS, mergeParticipants, type Emote, type Participant, type Snapshot 
 
 type Action = { action:string; [key:string]: unknown };
 type Tool = { name:string;title:string;description:string;inputSchema:object;annotations:{readOnlyHint:boolean;untrustedContentHint:boolean};execute:(input:any)=>unknown };
-export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:string}={}) {
+export default function Home() {
   const [view,setView]=useState<"landing"|"room"|"legacy">("landing");
   const [roomCode,setRoomCode]=useState("");
   const [joinCode,setJoinCode]=useState("");
@@ -19,7 +19,6 @@ export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:s
   const [role,setRole]=useState<Snapshot["role"]>("spectator");
   const [myId,setMyId]=useState<string|null>(null);
   const [loaded,setLoaded]=useState(false);
-  const [isOriginalGame,setIsOriginalGame]=useState(false);
   const [connected,setConnected]=useState(false);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -36,7 +35,7 @@ export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:s
   const myIdRef=useRef<string|null>(null);
   const apply=useCallback((data:Snapshot)=>{
     setParticipants(current=>mergeParticipants(current,data.participants));
-    setRole(data.role);setIsOriginalGame(Boolean(data.isOriginalGame));setMyId(data.participantId);myIdRef.current=data.participantId;
+    setRole(data.role);setMyId(data.participantId);myIdRef.current=data.participantId;
     if(eventBaseline.current===null)eventBaseline.current=data.serverTime;
     else{
       const fresh=data.emotes.filter(event=>event.created_at>eventBaseline.current!&&!seenEvents.current.has(event.id));
@@ -75,8 +74,6 @@ export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:s
         window.history.replaceState({},"",`${url.pathname}?room=${encodeURIComponent(code)}`);
         void request(token?{action:"enterHost",roomCode:code,token}:{action:"enterParticipant",roomCode:code,token:playerToken,participantId:playerId}).then(data=>apply(data)).catch(err=>setError(err.message));
       }else void refresh(code).catch(err=>setError(err.message));
-    }else if(url.searchParams.get("current")==="1"){
-      void refresh("").then(data=>{if(data.room&&data.isOriginalGame){resetRoom(data.room.code);window.history.replaceState({},"",`?room=${data.room.code}`);apply(data);}}).catch(err=>setError(err.message));
     }
     initialized.current=true;
   },[apply,refresh,request,resetRoom]);
@@ -154,9 +151,8 @@ export default function Home({originalGameUrl="/?current=1"}:{originalGameUrl?:s
     {view==="landing"?<>
       <div className="landing-panels"><section className="join-panel"><span className="section-marker">01 / START A TABLE</span><h2>Host a competition</h2><p>Create a room and invite your table. You can adjust everyone's counts.</p><form onSubmit={e=>{e.preventDefault();void save({action:"createRoom",name:hostName}).catch(()=>{});}}><label htmlFor="host-name">Your name</label><Input id="host-name" className="name-input" value={hostName} onChange={e=>setHostName(e.target.value)} placeholder="Your name or nickname" maxLength={32} autoComplete="given-name" required/><Button type="submit" className="join-button" disabled={busy||!hostName.trim()}><Crown size={19}/>Create a room</Button></form><p className="helper">You'll get a player link and a private host control link.</p></section>
       <section className="join-panel"><span className="section-marker">02 / PULL UP A SEAT</span><h2>Join your table</h2><p>Enter the room code from your host. Each player controls their own count.</p><form onSubmit={e=>{e.preventDefault();void openRoom();}}><label htmlFor="room-code">Room code</label><Input id="room-code" className="name-input code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g,"").slice(0,6))} placeholder="ABC234" maxLength={6} autoComplete="off" required/><Button type="submit" className="join-button" disabled={busy||joinCode.length!==6}><Users size={19}/>Open the room</Button></form></section></div>
-      {errorBox}<p className="landing-note">No accounts or sign-in. Your browser remembers your place at the table.</p><a className="legacy-link" href={originalGameUrl}>Return to the current game</a>
+      {errorBox}<p className="landing-note">No accounts or sign-in. Your browser remembers your place at the table.</p>
     </>:<>
-      {isOriginalGame&&<div className="legacy-notice"><LockKeyhole size={19}/><span>Your current game's names and counts are preserved. {role==="host"?"Share the player link so people can choose an available profile. Private links also work for existing players.":<>Existing players: choose an available profile below. <a href="/recover">Organizer: recover host controls</a></>}</span></div>}
       <section className="stats" aria-label="Competition totals"><div className="total-card"><div><p className="stat-label">SUSHI EATEN</p><p className="total-number">{loaded?total.toLocaleString():"—"}<span>pieces</span></p></div><img className="sushi-photo" src="/sushi.jpg" alt="Two salmon nigiri on a black plate" width="160" height="160"/></div><div className="people-card"><Users size={24} strokeWidth={1.6}/><span className="people-number">{loaded?participants.length:"—"}</span><span className="people-label">{participants.length===1?"participant":"participants"}</span></div></section>
       <div className={`workspace ${view==="legacy"?"legacy-workspace":""}`}>
         {view==="room"&&<aside className="join-panel"><span className="section-marker">YOUR TABLE</span>{role==="spectator"?<><h2>Pick your profile</h2><p>Choose an available name. Once joined, you can control only that profile.</p>{loaded&&participants.length>0&&<div className="profile-picker" aria-label="Choose an available participant profile">{participants.map(p=><Button key={p.id} variant="outline" className="profile-option" disabled={disabled||!p.claimable} onClick={()=>void save({action:"claimProfile",roomCode,participantId:p.id}).catch(()=>{})}><span className="profile-option-name">{p.name}</span><span>{p.claimable?`${p.count} sushi · Join`:"Already joined"}</span></Button>)}</div>}<p className="new-profile-label">Not on the board? Add yourself.</p><form onSubmit={e=>{e.preventDefault();void save({action:"join",roomCode,name}).catch(()=>{});}}><label htmlFor="participant-name">Your name</label><Input id="participant-name" className="name-input" placeholder="e.g. Alex" maxLength={32} autoComplete="given-name" value={name} onChange={e=>setName(e.target.value)} required/><Button className="join-button" disabled={disabled||!name.trim()} type="submit"><Plus size={19}/>Join this room</Button></form><p className="helper">Already joined profiles stay protected. Use your original browser, or ask the host for your private player link.</p></>:<><div className="identity-card"><span className="participant-avatar identity-avatar">{me?.name.split(/\s+/).map(word=>[...word][0]).slice(0,2).join("").toUpperCase()}</span><div><h2>{me?.name||(role==="host"?"Host controls":"You're at the table")}</h2><p>{role==="host"?<><Crown size={14}/>Room host</>:"Participant"}</p></div></div><p>{role==="host"?"You can update everyone's count. Players can only update their own.":"Use +1 to count each piece. Only you and the host can update your score."}</p><div className="reaction-picker"><span className="reaction-label">Send a reaction</span><div className="reaction-options" role="group" aria-label="Your emoji reactions">{EMOJIS.map(emoji=><Button key={emoji} variant="outline" className="emoji-button" aria-label={`Send ${emoji} reaction`} disabled={disabled||emoteCooldown||!myId} onClick={()=>void save({action:"emote",roomCode,participantId:myId,emoji,operationId:crypto.randomUUID()}).catch(()=>{})}>{emoji}</Button>)}</div><p>It floats above your avatar for everyone.</p></div></>}

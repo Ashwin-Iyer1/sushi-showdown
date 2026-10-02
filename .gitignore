@@ -3,6 +3,8 @@ dist/
 .wrangler/
 .vinext/
 .next/
+.vercel/
+.migration/
 .env*
 .dev.vars*
 *.tsbuildinfo
