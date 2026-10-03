@@ -2,9 +2,9 @@
 // Use native `vercel env pull` then `node --env-file=.env.local ...`.
 import {readFile} from "node:fs/promises";
 import {neon} from "@neondatabase/serverless";
-const connection=process.env.DATABASE_URL;
+const connection=process.env.DATABASE_URL_UNPOOLED;
 const expectedHost=process.env.SUSHI_NEON_EXPECTED_HOST;
-if(!connection||!expectedHost||new URL(connection).hostname!==expectedHost||!expectedHost.endsWith(".neon.tech"))throw new Error("A verified separate Neon database and matching expected hostname are required");
+if(!connection||!expectedHost||expectedHost.includes("-pooler")||new URL(connection).hostname!==expectedHost||!expectedHost.endsWith(".neon.tech"))throw new Error("A verified separate Neon database and matching direct hostname are required");
 const sql=neon(connection);
 const existing=await sql.query("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public'");
 if(existing.length)throw new Error("The target contains tables; refusing to modify an existing database");

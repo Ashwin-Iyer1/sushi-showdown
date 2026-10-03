@@ -1,5 +1,7 @@
 # Sushi Showdown
 
+Live app: https://sushi-showdown.vercel.app
+
 A public, independent sushi scorekeeping app. Anyone can create a room or open one by its six-character code, without an account. New rooms start empty apart from the host's profile at zero sushi.
 
 ## Room controls
@@ -25,7 +27,7 @@ Vercel's account/team was verified on active Hobby. [Hobby](https://vercel.com/d
 
 ## Development and verification
 
-Requires Node.js 22.13+ and npm. Run `npm ci`, `npm test`, `npm run typecheck`, and `npm run build:vercel`.
+Requires Node.js 24.x and npm 11.6.2. The Vercel install command pins the same npm version for reproducible lockfile handling. Run `npm ci`, `npm test`, `npm run typecheck`, and `npm run build:vercel`.
 
 Tests run against an isolated PostgreSQL engine without cloud credentials. They cover room creation/joining, own-profile permissions, host controls, twelve concurrent profile claims and retries, private links/cookies, room isolation, reactions, nonnegative scores and serialization retries.
 

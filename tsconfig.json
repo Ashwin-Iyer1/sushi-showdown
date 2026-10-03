@@ -31,7 +31,8 @@
     "types": [
       "node",
       "@cloudflare/workers-types"
-    ]
+    ],
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "next-env.d.ts",
