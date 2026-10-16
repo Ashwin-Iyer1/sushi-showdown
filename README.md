@@ -4,6 +4,15 @@ Live app: https://sushi-showdown.vercel.app
 
 A public, independent sushi scorekeeping app. Anyone can create a room or open one by its six-character code, without an account. New rooms start empty apart from the host's profile at zero sushi.
 
+## Explore the table
+
+- [Open the practice table](https://sushi-showdown.vercel.app/?practice=1) to try fictional scores, add nicknames, explore ties, and reset without creating a database room. Practice data stays in the current tab and resets on reload; it cannot synchronize with other players.
+- **Table display** gives real and practice rooms a larger, read-only leaderboard. Return to controls restores the existing permissions. Real rooms continue polling while the display is open.
+- **Download standings** exports the currently displayed snapshot as CSV: room, capture timestamp, tied rank, name, and pieces. Exports include no control links, tokens, internal IDs, or reactions; spreadsheet formula prefixes are escaped. A stale/offline snapshot is labeled in the interface.
+- Names tied on count share a competition rank. The summary identifies a shared lead without inventing a winner.
+
+The client invalidates in-flight reads around saves and private-link entry, and rejects older completed reads. A slow poll cannot overwrite the identity established by a newer save.
+
 ## Room controls
 
 - The host can adjust any count in their room and issue private player-control links.
@@ -30,6 +39,10 @@ Vercel's account/team was verified on active Hobby. [Hobby](https://vercel.com/d
 Requires Node.js 24.x and npm 11.6.2. The Vercel install command pins the same npm version for reproducible lockfile handling. Run `npm ci`, `npm test`, `npm run typecheck`, and `npm run build:vercel`.
 
 Tests run against an isolated PostgreSQL engine without cloud credentials. They cover room creation/joining, own-profile permissions, host controls, twelve concurrent profile claims and retries, private links/cookies, room isolation, reactions, nonnegative scores and serialization retries.
+
+Run `npm run dev:browser` for the frontend at `http://127.0.0.1:4197`; `?practice=1` works without a backend. For UI verification, run `npx playwright install chromium` then `npm run test:ui`. The browser suite verifies practice changes make zero API requests, exports and table display work, 320px layout stays within the viewport, and a deliberately delayed polling response cannot erase the saved player identity. The CI room tests use isolated fixtures. The separate `tests/public.integration.mjs` script is an explicit operator action that creates isolated QA rooms on production; it is not part of CI or this change's verification.
+
+The production dependency audit is clear after upgrading the affected Next/React runtime dependencies. The optional Vinext/Drizzle development dependency tree still has upstream audit findings in glob parsing, ZIP parsing, and a nested development-server esbuild; no forced major downgrade is applied. The browser dev server binds to loopback. Vercel uses the separate React static build and Node API rather than the optional Vinext runtime.
 
 The optional standalone Cloudflare build remains supported with D1: run `npm run db:migrate`, `npm run dev`, or `npm run build` then `npm start`. For local production integration checks, start on port 8788 and run `node tests/rooms.integration.mjs`. Local migrations and preview share ignored `.wrangler/state` storage. The all-zero database ID in `wrangler.jsonc` is a local placeholder.
 

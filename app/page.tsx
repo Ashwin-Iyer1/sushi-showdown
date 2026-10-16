@@ -5,12 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PracticeTable } from "@/components/practice-table";
+import { TableTools } from "@/components/table-tools";
+import { SnapshotGate } from "@/lib/standings";
 import { EMOJIS, mergeParticipants, type Emote, type Participant, type Snapshot } from "@/lib/scoreboard";
 
 type Action = { action:string; [key:string]: unknown };
 type Tool = { name:string;title:string;description:string;inputSchema:object;annotations:{readOnlyHint:boolean;untrustedContentHint:boolean};execute:(input:any)=>unknown };
 export default function Home() {
-  const [view,setView]=useState<"landing"|"room"|"legacy">("landing");
+  const [view,setView]=useState<"landing"|"room"|"legacy"|"practice">("landing");
+  const [displayMode,setDisplayMode]=useState(false);
+  const [capturedAt,setCapturedAt]=useState(0);
   const [roomCode,setRoomCode]=useState("");
   const [joinCode,setJoinCode]=useState("");
   const [name,setName]=useState("");
@@ -30,7 +35,7 @@ export default function Home() {
   const seenEvents=useRef(new Map<string,number>());
   const saving=useRef(false);
   const activeRoom=useRef("");
-  const readEpoch=useRef(0);
+  const readGate=useRef(new SnapshotGate());
   const initialized=useRef(false);
   const myIdRef=useRef<string|null>(null);
   const apply=useCallback((data:Snapshot)=>{
@@ -43,20 +48,21 @@ export default function Home() {
     }
     for(const event of data.emotes)seenEvents.current.set(event.id,event.created_at);
     for(const[id,time]of seenEvents.current)if(time<data.serverTime-15000)seenEvents.current.delete(id);
-    setLoaded(true);setConnected(true);
+    setLoaded(true);setConnected(true);setCapturedAt(Date.now());
   },[]);
   const resetRoom=useCallback((code:string)=>{
-    activeRoom.current=code;readEpoch.current++;setParticipants([]);setActiveEmotes([]);setLoaded(false);setMyId(null);myIdRef.current=null;setRole("spectator");eventBaseline.current=null;seenEvents.current.clear();setRoomCode(code);setView(code?"room":"legacy");setError("");setRetryAction(null);
+    activeRoom.current=code;readGate.current.invalidate();setParticipants([]);setActiveEmotes([]);setLoaded(false);setMyId(null);myIdRef.current=null;setRole("spectator");eventBaseline.current=null;seenEvents.current.clear();setRoomCode(code);setView(code?"room":"legacy");setConnected(false);setDisplayMode(false);setNotice("");setError("");setRetryAction(null);
   },[]);
   const refresh=useCallback(async(code=activeRoom.current)=>{
-    const epoch=readEpoch.current;
+    if(saving.current)throw new Error("A save is in progress.");
+    const ticket=readGate.current.begin();
     try{
       const res=await fetch(`/api/scoreboard${code?`?room=${encodeURIComponent(code)}`:""}`,{cache:"no-store",signal:AbortSignal.timeout(10000)});
       const data=await res.json() as Snapshot&{error?:string};
       if(!res.ok)throw new Error(data.error||"Couldn't load this room.");
-      if(epoch===readEpoch.current&&code===activeRoom.current)apply(data);
+      if(code===activeRoom.current&&readGate.current.accepts(ticket))apply(data);
       return data;
-    }catch(err){if(epoch===readEpoch.current){setConnected(false);if(!initialized.current)setError(err instanceof Error?err.message:"Couldn't connect.");}throw err;}
+    }catch(err){if(code===activeRoom.current&&readGate.current.accepts(ticket)){setConnected(false);if(!initialized.current)setError(err instanceof Error?err.message:"Couldn't connect.");}throw err;}
   },[apply]);
   const request=useCallback(async(action:Action)=>{
     const res=await fetch("/api/scoreboard",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(action),signal:AbortSignal.timeout(12000)});
@@ -66,13 +72,15 @@ export default function Home() {
   },[]);
   useEffect(()=>{
     const url=new URL(window.location.href);const code=(url.searchParams.get("room")||"").toUpperCase();
+    if(url.searchParams.get("practice")==="1"){setView("practice");initialized.current=true;return;}
     if(code){
       resetRoom(code);const token=new URLSearchParams(url.hash.slice(1)).get("host");
       const playerToken=new URLSearchParams(url.hash.slice(1)).get("player");
       const playerId=new URLSearchParams(url.hash.slice(1)).get("participant");
       if(token||playerToken){
+        saving.current=true;setBusy(true);
         window.history.replaceState({},"",`${url.pathname}?room=${encodeURIComponent(code)}`);
-        void request(token?{action:"enterHost",roomCode:code,token}:{action:"enterParticipant",roomCode:code,token:playerToken,participantId:playerId}).then(data=>apply(data)).catch(err=>setError(err.message));
+        void request(token?{action:"enterHost",roomCode:code,token}:{action:"enterParticipant",roomCode:code,token:playerToken,participantId:playerId}).then(data=>{readGate.current.invalidate();apply(data);}).catch(err=>setError(err.message)).finally(()=>{saving.current=false;setBusy(false);});
       }else void refresh(code).catch(err=>setError(err.message));
     }
     initialized.current=true;
@@ -91,7 +99,7 @@ export default function Home() {
     finally{saving.current=false;setBusy(false);}
   };
   useEffect(()=>{
-    if(view==="landing")return;
+    if(view!=="room"&&view!=="legacy")return;
     const poll=setInterval(()=>{if(document.visibilityState==="visible")void refresh().catch(()=>{});},2000);
     const expire=setInterval(()=>setActiveEmotes(current=>current.filter(event=>Date.now()-event.shownAt<3600)),500);
     const resume=()=>{if(document.visibilityState==="visible")void refresh().catch(()=>{});};
@@ -100,7 +108,7 @@ export default function Home() {
   },[view,refresh]);
   const save=useCallback(async(action:Action)=>{
     if(saving.current)throw new Error("Wait for the current save to finish.");
-    saving.current=true;setBusy(true);setError("");setNotice("");readEpoch.current++;
+    saving.current=true;setBusy(true);setError("");setNotice("");readGate.current.invalidate();
     try{
       const data=await request(action);
       if(action.action==="createRoom"||action.action==="join"){
@@ -108,7 +116,7 @@ export default function Home() {
         if(activeRoom.current!==code||action.action==="createRoom")resetRoom(code);
         window.history.replaceState({},"",`?room=${encodeURIComponent(code)}`);setRoomCode(code);setView("room");setName("");
       }
-      apply(data);setRetryAction(null);
+      readGate.current.invalidate();apply(data);setRetryAction(null);
       if(action.action==="createRoom")setNotice("Room created. Share the player link, and save your private host link.");
       else if(action.action==="join"||action.action==="claimProfile")setNotice("You're in! You can update your own count and send reactions.");
       else if(action.action==="emote"){setNotice(`${action.emoji} sent`);setEmoteCooldown(true);setTimeout(()=>setEmoteCooldown(false),2000);}
@@ -128,6 +136,7 @@ export default function Home() {
     }catch{setError("Couldn't copy the link. Use the room code to invite players.");}
   };
   useEffect(()=>{
+    if(view!=="room"&&view!=="legacy")return;
     const context=(document as Document&{modelContext?:{registerTool:(tool:Tool,options:{signal:AbortSignal})=>unknown}}).modelContext;
     if(!context?.registerTool)return;
     const lifecycle=new AbortController();
@@ -139,26 +148,29 @@ export default function Home() {
     ];
     for(const tool of toolList){try{void Promise.resolve(context.registerTool(tool,{signal:lifecycle.signal})).catch(console.error);}catch(err){console.error(err);}}
     return()=>lifecycle.abort();
-  },[refresh,save]);
+  },[refresh,save,view]);
+  if(view==="practice")return <PracticeTable onExit={()=>{setView("landing");window.history.replaceState({},"",window.location.pathname);}}/>;
   const me=participants.find(p=>p.id===myId);
   const total=participants.reduce((sum,p)=>sum+p.count,0);
   const leaders=participants.length&&participants[0].count>0?participants.filter(p=>p.count===participants[0].count).map(p=>p.id):[];
   const disabled=busy||retryAction!==null;
   const errorBox=error&&<div className="error-box" role="alert"><span>{error}</span>{retryAction&&<Button variant="outline" disabled={busy} onClick={()=>void save(retryAction).catch(()=>{})}>Retry save</Button>}</div>;
-  return <main className="scoreboard-shell">
+  return <main className={`scoreboard-shell ${displayMode?"display-mode":""}`}>
     <header className="masthead"><a className="wordmark" href="/?new=1" aria-label="Create or join another Sushi Showdown room"><span className="wordmark-icon" aria-hidden="true">S.</span><span>SUSHI<br/>SHOWDOWN</span></a>{view!=="landing"&&<div className="sync-badge" role="status">{connected?<><span className="live-dot"/>Live & synced</>:<><WifiOff size={15}/>Connecting</>}</div>}</header>
     <div className="title-row"><div><p className="eyebrow">THE SUSHI EATING COMPETITION</p><h1>{view==="room"?`Table ${roomCode}`:view==="legacy"?"The earlier scoreboard.":"Every piece counts."}</h1></div><p className="small-note">One table.<br/>One shared scoreboard.</p></div>
     {view==="landing"?<>
       <div className="landing-panels"><section className="join-panel"><span className="section-marker">01 / START A TABLE</span><h2>Host a competition</h2><p>Create a room and invite your table. You can adjust everyone's counts.</p><form onSubmit={e=>{e.preventDefault();void save({action:"createRoom",name:hostName}).catch(()=>{});}}><label htmlFor="host-name">Your name</label><Input id="host-name" className="name-input" value={hostName} onChange={e=>setHostName(e.target.value)} placeholder="Your name or nickname" maxLength={32} autoComplete="given-name" required/><Button type="submit" className="join-button" disabled={busy||!hostName.trim()}><Crown size={19}/>Create a room</Button></form><p className="helper">You'll get a player link and a private host control link.</p></section>
       <section className="join-panel"><span className="section-marker">02 / PULL UP A SEAT</span><h2>Join your table</h2><p>Enter the room code from your host. Each player controls their own count.</p><form onSubmit={e=>{e.preventDefault();void openRoom();}}><label htmlFor="room-code">Room code</label><Input id="room-code" className="name-input code-input" value={joinCode} onChange={e=>setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z2-9]/g,"").slice(0,6))} placeholder="ABC234" maxLength={6} autoComplete="off" required/><Button type="submit" className="join-button" disabled={busy||joinCode.length!==6}><Users size={19}/>Open the room</Button></form></section></div>
+      <section className="practice-entry"><div><span className="section-marker">FIRST TIME HERE?</span><h2>Try a table before you invite one.</h2><p>A fictional practice room, with the same rankings, display mode, and export tools. No account or room creation.</p></div><Button variant="outline" onClick={()=>{setView("practice");window.history.replaceState({},"",`${window.location.pathname}?practice=1`);}}>Open practice table</Button></section>
       {errorBox}<p className="landing-note">No accounts or sign-in. Your browser remembers your place at the table.</p>
     </>:<>
       <section className="stats" aria-label="Competition totals"><div className="total-card"><div><p className="stat-label">SUSHI EATEN</p><p className="total-number">{loaded?total.toLocaleString():"—"}<span>pieces</span></p></div><img className="sushi-photo" src="/sushi.jpg" alt="Two salmon nigiri on a black plate" width="160" height="160"/></div><div className="people-card"><Users size={24} strokeWidth={1.6}/><span className="people-number">{loaded?participants.length:"—"}</span><span className="people-label">{participants.length===1?"participant":"participants"}</span></div></section>
+      {loaded&&<TableTools participants={participants} room={roomCode||"ARCHIVE"} display={displayMode} onDisplay={()=>setDisplayMode(value=>!value)} capturedAt={capturedAt} offline={!connected}/>}
       <div className={`workspace ${view==="legacy"?"legacy-workspace":""}`}>
         {view==="room"&&<aside className="join-panel"><span className="section-marker">YOUR TABLE</span>{role==="spectator"?<><h2>Pick your profile</h2><p>Choose an available name. Once joined, you can control only that profile.</p>{loaded&&participants.length>0&&<div className="profile-picker" aria-label="Choose an available participant profile">{participants.map(p=><Button key={p.id} variant="outline" className="profile-option" disabled={disabled||!p.claimable} onClick={()=>void save({action:"claimProfile",roomCode,participantId:p.id}).catch(()=>{})}><span className="profile-option-name">{p.name}</span><span>{p.claimable?`${p.count} sushi · Join`:"Already joined"}</span></Button>)}</div>}<p className="new-profile-label">Not on the board? Add yourself.</p><form onSubmit={e=>{e.preventDefault();void save({action:"join",roomCode,name}).catch(()=>{});}}><label htmlFor="participant-name">Your name</label><Input id="participant-name" className="name-input" placeholder="e.g. Alex" maxLength={32} autoComplete="given-name" value={name} onChange={e=>setName(e.target.value)} required/><Button className="join-button" disabled={disabled||!name.trim()} type="submit"><Plus size={19}/>Join this room</Button></form><p className="helper">Already joined profiles stay protected. Use your original browser, or ask the host for your private player link.</p></>:<><div className="identity-card"><span className="participant-avatar identity-avatar">{me?.name.split(/\s+/).map(word=>[...word][0]).slice(0,2).join("").toUpperCase()}</span><div><h2>{me?.name||(role==="host"?"Host controls":"You're at the table")}</h2><p>{role==="host"?<><Crown size={14}/>Room host</>:"Participant"}</p></div></div><p>{role==="host"?"You can update everyone's count. Players can only update their own.":"Use +1 to count each piece. Only you and the host can update your score."}</p><div className="reaction-picker"><span className="reaction-label">Send a reaction</span><div className="reaction-options" role="group" aria-label="Your emoji reactions">{EMOJIS.map(emoji=><Button key={emoji} variant="outline" className="emoji-button" aria-label={`Send ${emoji} reaction`} disabled={disabled||emoteCooldown||!myId} onClick={()=>void save({action:"emote",roomCode,participantId:myId,emoji,operationId:crypto.randomUUID()}).catch(()=>{})}>{emoji}</Button>)}</div><p>It floats above your avatar for everyone.</p></div></>}
         <div className="invite-panel"><span className="public-label">ROOM CODE</span><strong className="room-code">{roomCode}</strong><Button variant="outline" className="copy-link" onClick={()=>void copy()}><Copy size={16}/>Copy player link</Button>{role==="host"&&<><Button variant="ghost" className="host-link" onClick={()=>void copy(true)}><LockKeyhole size={15}/>Copy private host link</Button><p className="host-warning">Save your host link somewhere safe. Anyone who has it can control this room.</p></>}</div><div className="public-note"><span className="public-label">SHARED WITH YOUR TABLE</span><p>Anyone with the room code can view names and counts. Use a nickname if you prefer. Each browser keeps its own room identity.</p></div></aside>}
         <section className="board-panel" aria-labelledby="board-title"><div className="board-heading"><div><span className="section-marker">THE STANDINGS</span><h2 id="board-title">Leaderboard</h2></div><Trophy className="trophy" size={27} strokeWidth={1.5}/></div>{!connected&&<div className="connection-note">{loaded?"Showing the last saved counts. Reconnecting…":"Connecting to the scoreboard…"}<Button variant="ghost" className="retry-button" aria-label="Refresh scoreboard" onClick={()=>void refresh().catch(err=>setError(err.message))}><RefreshCw size={16}/></Button></div>}{errorBox}
-        {loaded&&participants.length===0?<Empty className="empty-board"><EmptyHeader><span className="empty-number" aria-hidden="true">0</span><EmptyTitle>The table is yours.</EmptyTitle><EmptyDescription>{view==="legacy"?"No earlier participants to show.":"Share the room code to fill the table."}</EmptyDescription></EmptyHeader></Empty>:!loaded?<div className="loading-board" aria-label="Loading scoreboard"><Skeleton className="loading-row"/><Skeleton className="loading-row"/></div>:<ol className="participants">{participants.map(p=>{const rank=participants.findIndex(x=>x.count===p.count)+1;const canAdjust=role==="host"||(role==="participant"&&p.id===myId);return <li key={p.id} className={`participant ${myId===p.id?"selected":""} ${leaders.includes(p.id)?"leader":""}`}><span className="rank" aria-label={`Rank ${rank}`}>{String(rank).padStart(2,"0")}</span><div className="participant-identity"><div className="avatar-wrap"><span className={`participant-avatar static-avatar ${myId===p.id?"my-avatar":""}`}>{p.name.split(/\s+/).map(word=>[...word][0]).slice(0,2).join("").toUpperCase()}</span>{activeEmotes.filter(event=>event.participant_id===p.id).map(event=><span key={event.id} className="floating-emote" role="img" aria-label={`${p.name} reacts ${event.emoji}`}>{event.emoji}</span>)}</div><div className="participant-name"><span>{p.name}</span>{leaders.includes(p.id)?<small>LEADING{myId===p.id?" · YOU":""}</small>:myId===p.id?<small>YOU</small>:null}{role==="host"&&p.id!==myId&&<button className="player-link-button" onClick={()=>void copy(false,p.id)} aria-label={`Copy private player link for ${p.name}`}>Copy player link</button>}</div></div><div className={`score-controls ${!canAdjust?"read-only-score":""}`}>{canAdjust&&<Button className="count-button subtract" variant="outline" aria-label={`Subtract one sushi from ${p.name}`} disabled={p.count===0||disabled} onClick={()=>void save({action:"adjust",roomCode,participantId:p.id,delta:-1,operationId:crypto.randomUUID()}).catch(()=>{})}><Minus size={20}/></Button>}<div className="participant-count" aria-label={`${p.count} sushi`}>{p.count.toLocaleString()}<span>sushi</span></div>{canAdjust&&<Button className="count-button add" aria-label={`Add one sushi to ${p.name}`} disabled={disabled} onClick={()=>void save({action:"adjust",roomCode,participantId:p.id,delta:1,operationId:crypto.randomUUID()}).catch(()=>{})}><Plus size={23}/></Button>}</div></li>;})}</ol>}
+        {loaded&&participants.length===0?<Empty className="empty-board"><EmptyHeader><span className="empty-number" aria-hidden="true">0</span><EmptyTitle>The table is yours.</EmptyTitle><EmptyDescription>{view==="legacy"?"No earlier participants to show.":"Share the room code to fill the table."}</EmptyDescription></EmptyHeader></Empty>:!loaded?<div className="loading-board" aria-label="Loading scoreboard"><Skeleton className="loading-row"/><Skeleton className="loading-row"/></div>:<ol className="participants">{participants.map(p=>{const rank=participants.findIndex(x=>x.count===p.count)+1;const canAdjust=!displayMode&&(role==="host"||(role==="participant"&&p.id===myId));return <li key={p.id} className={`participant ${myId===p.id?"selected":""} ${leaders.includes(p.id)?"leader":""}`}><span className="rank" aria-label={`Rank ${rank}`}>{String(rank).padStart(2,"0")}</span><div className="participant-identity"><div className="avatar-wrap"><span className={`participant-avatar static-avatar ${myId===p.id?"my-avatar":""}`}>{p.name.split(/\s+/).map(word=>[...word][0]).slice(0,2).join("").toUpperCase()}</span>{activeEmotes.filter(event=>event.participant_id===p.id).map(event=><span key={event.id} className="floating-emote" role="img" aria-label={`${p.name} reacts ${event.emoji}`}>{event.emoji}</span>)}</div><div className="participant-name"><span>{p.name}</span>{leaders.includes(p.id)?<small>LEADING{myId===p.id?" · YOU":""}</small>:myId===p.id?<small>YOU</small>:null}{!displayMode&&role==="host"&&p.id!==myId&&<button className="player-link-button" onClick={()=>void copy(false,p.id)} aria-label={`Copy private player link for ${p.name}`}>Copy player link</button>}</div></div><div className={`score-controls ${!canAdjust?"read-only-score":""}`}>{canAdjust&&<Button className="count-button subtract" variant="outline" aria-label={`Subtract one sushi from ${p.name}`} disabled={p.count===0||disabled} onClick={()=>void save({action:"adjust",roomCode,participantId:p.id,delta:-1,operationId:crypto.randomUUID()}).catch(()=>{})}><Minus size={20}/></Button>}<div className="participant-count" aria-label={`${p.count} sushi`}>{p.count.toLocaleString()}<span>sushi</span></div>{canAdjust&&<Button className="count-button add" aria-label={`Add one sushi to ${p.name}`} disabled={disabled} onClick={()=>void save({action:"adjust",roomCode,participantId:p.id,delta:1,operationId:crypto.randomUUID()}).catch(()=>{})}><Plus size={23}/></Button>}</div></li>;})}</ol>}
         <div className="board-footer"><span>{busy?"Saving to the table…":"Updates automatically every 2 seconds"}</span><span>{view==="legacy"?"Read-only archive":role==="host"?"Host controls enabled":"Your count, your controls"}</span></div></section>
       </div>
     </>}
